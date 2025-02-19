@@ -1,4 +1,4 @@
-from v5.qualities import *
+from v5.modifiers import *
 
 
 

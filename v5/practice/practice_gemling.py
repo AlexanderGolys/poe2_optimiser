@@ -1,4 +1,4 @@
-from v5.comparators import *
+from src.comparators import *
 
 boots = Boots(energy_shield=80, quality=0, item_level=81, runes=[], sockets=0, corrupted=True, local_mods_applied=True,
               affixes=[IncreaseModifier(MovementSpeed, .2),

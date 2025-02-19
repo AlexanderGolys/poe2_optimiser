@@ -201,7 +201,10 @@ class Player:
     def get_stat(self, stat_name, recursion_break=False):
         val = self.get_base(stat_name)
         for item in self.inventory:
-            val = val.add(item.get_stat(stat_name).value())
+            v = item.get_stat(stat_name)
+            if isinstance(v, StatValue):
+                v = v.value()
+            val = val.add(v)
         for mod in self.global_mods():
             if isinstance(mod, DependentModifier):
                 if recursion_break:
@@ -214,6 +217,7 @@ class Player:
         return val
 
     def stat_changed(self, stat_name):
+        a = self.get_stat(stat_name)
         if stat_name in self.DEFAULT_BASE_STATS:
             if self.get_stat(stat_name).value() == self.DEFAULT_BASE_STATS[stat_name]:
                 return False
@@ -225,7 +229,7 @@ class Player:
         return self.get_stat(stat_name).value() != stat_name.neutral_value.value()
 
     def __str__(self):
-        return '\n'.join(['\n'.join([f'{stat}: {self.get_stat(stat).value():.{stat.prec}f}' for stat in block if self.stat_changed(stat)]) for block in self.blocks])
+        return '\n\n'.join(['\n'.join([f'{stat}: {self.get_stat(stat).value():.{stat.prec}f}' for stat in block if self.stat_changed(stat)]) for block in self.blocks])
 
     def active_skill_damage(self, skill):
         player_dmg = self.get_stat(Damage)

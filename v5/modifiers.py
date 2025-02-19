@@ -1,4 +1,5 @@
 from v5.stats import *
+from v5.qualities import *
 
 
 class Modifier:
@@ -35,30 +36,27 @@ feathered_fletching = DependentModifier(lambda player: AllDamageIncreaseModifier
 
 
 class NumericalModifier(Modifier):
-    def __init__(self, act, value, local=False, rounding=False, quality_tags=[]):
+    def __init__(self, act, value, local=False, rounding=False, qualities=[]):
         self.value_ = value
         self.rounding = rounding
         self.magnitude = 1
-        self.quality_tags = quality_tags
+        self.applicable_qualities = qualities
         super().__init__(act, local)
 
     @property
     def value(self):
         if self.rounding:
-            return round(self.value_ * self.magnitude)
-        return self.value_ * self.magnitude
+            return round(self.value_)
+        return self.value_
 
     @value.setter
     def value(self, value):
         self.value_ = value
-        if self.rounding:
-            self.value_ = round(self.value_)
 
-    def set_magnitude_from_quality(self, quality, quality_tag):
-        if quality_tag in self.quality_tags:
-            self.magnitude = 1 + quality
-        else:
-            self.magnitude = 1
+    def magnify_to(self, magnitude):
+        self.value *= magnitude/self.magnitude
+        self.magnitude = magnitude
+
 
     def inv_value(self):
         return -self.value_
@@ -68,12 +66,10 @@ class NumericalModifier(Modifier):
         i.value_ = i.inv_value()
         return i
 
-    def rebase_applied_magnitude(self):
-        self.value_ = self.value_ / self.magnitude
 
 
 class AddModifier(NumericalModifier):
-    def __init__(self, stat_name, value, rounding=False):
+    def __init__(self, stat_name, value, rounding=False, qualities=[]):
         self.stat_name = stat_name
 
         def act(name, value):
@@ -81,7 +77,7 @@ class AddModifier(NumericalModifier):
                 return value.add(deepcopy(self.value))
             return value
 
-        super().__init__(act, value, False, rounding)
+        super().__init__(act, value, False, rounding, qualities)
 
     def __str__(self):
         return f'Adds +{self.value} to {self.stat_name}'
@@ -94,7 +90,7 @@ class LocalAddModifier(AddModifier):
 
 
 class IncreaseModifier(NumericalModifier):
-    def __init__(self, stat_name, value):
+    def __init__(self, stat_name, value, qualities=[]):
         self.stat_name = stat_name
 
         def act(name, value):
@@ -102,15 +98,22 @@ class IncreaseModifier(NumericalModifier):
                 return value.increase_bonus(self.value)
             return value
 
-        super().__init__(act, value, False, False)
+        super().__init__(act, value, False, False, qualities=qualities)
 
     def __str__(self):
         return f'{self.value} increased {self.stat_name}'
 
 
+class LocalIncreaseModifier(IncreaseModifier):
+    def __init__(self, stat_name, value):
+        super().__init__(stat_name, value)
+        self.local = True
+
+
 class DamageIncreaseModifier(IncreaseModifier):
     def __init__(self, physical=0, fire=0, cold=0, lightning=0, chaos=0):
-        super().__init__(Damage, Vector([physical, lightning, fire, cold, chaos]))
+        super().__init__(Damage, Vector([physical, lightning, fire, cold, chaos]),
+                         qualities=[ATTACK_QUALITY])
 
 
 class AllDamageIncreaseModifier(DamageIncreaseModifier):
@@ -126,29 +129,60 @@ class ElementalDamageIncrease(DamageIncreaseModifier):
 class PhysicalDamageIncrease(DamageIncreaseModifier):
     def __init__(self, value):
         super().__init__(value, 0, 0, 0, 0)
+        self.applicable_qualities += [PHYSICAL_QUALITY]
 
 
 class AddPhysicalDamage(AddModifier):
     def __init__(self, v0, v1):
         super().__init__(Damage, Vector([Vector([v0, v1]), Vector([0, 0]), Vector([0, 0]), Vector([0, 0]), Vector([0, 0])]))
+        self.applicable_qualities += [PHYSICAL_QUALITY]
 
 
 class AddLightningDamage(AddModifier):
     def __init__(self, v0, v1):
         super().__init__(Damage, Vector([Vector([0, 0]), Vector([v0, v1]), Vector([0, 0]), Vector([0, 0]), Vector([0, 0])]))
+        self.applicable_qualities += [LIGHTNING_QUALITY]
 
 
 class AddFireDamage(AddModifier):
     def __init__(self, v0, v1):
         super().__init__(Damage, Vector([Vector([0, 0]), Vector([0, 0]), Vector([v0, v1]), Vector([0, 0]), Vector([0, 0])]))
+        self.applicable_qualities += [FIRE_QUALITY]
 
 
 class AddColdDamage(AddModifier):
     def __init__(self, v0, v1):
         super().__init__(Damage, Vector([Vector([0, 0]), Vector([0, 0]), Vector([0, 0]), Vector([v0, v1]), Vector([0, 0])]))
+        self.applicable_qualities += [COLD_QUALITY]
 
 
 class AddChaosDamage(AddModifier):
+    def __init__(self, v0, v1):
+        super().__init__(Damage, Vector([Vector([0, 0]), Vector([0, 0]), Vector([0, 0]), Vector([0, 0]), Vector([v0, v1])]))
+        self.applicable_qualities += [CHAOS_QUALITY]
+
+
+class LocalAddPhysicalDamage(LocalAddModifier):
+    def __init__(self, v0, v1):
+        super().__init__(Damage, Vector([Vector([v0, v1]), Vector([0, 0]), Vector([0, 0]), Vector([0, 0]), Vector([0, 0])]))
+
+
+class LocalAddLightningDamage(LocalAddModifier):
+    def __init__(self, v0, v1):
+        super().__init__(Damage, Vector([Vector([0, 0]), Vector([v0, v1]), Vector([0, 0]), Vector([0, 0]), Vector([0, 0])]))
+
+
+class LocalAddFireDamage(LocalAddModifier):
+    def __init__(self, v0, v1):
+        super().__init__(Damage, Vector([Vector([0, 0]), Vector([0, 0]), Vector([v0, v1]), Vector([0, 0]), Vector([0, 0])]))
+
+
+class LocalAddColdDamage(LocalAddModifier):
+    def __init__(self, v0, v1):
+        super().__init__(Damage, Vector([Vector([0, 0]), Vector([0, 0]), Vector([0, 0]), Vector([v0, v1]), Vector([0, 0])]))
+
+
+class LocalAddChaosDamage(LocalAddModifier):
     def __init__(self, v0, v1):
         super().__init__(Damage, Vector([Vector([0, 0]), Vector([0, 0]), Vector([0, 0]), Vector([0, 0]), Vector([v0, v1])]))
 
@@ -177,10 +211,29 @@ class MultiAddModifier(NumericalModifier):
         super().__init__(act, value, False, False)
 
 
-class LocalIncreaseModifier(IncreaseModifier):
-    def __init__(self, stat_name, value):
-        super().__init__(stat_name, value)
-        self.local = True
+class IncreasePhysicalDamage(IncreaseModifier):
+    def __init__(self, value):
+        super().__init__(Damage, Vector([value, 0, 0, 0, 0]))
+
+
+class IncreaseLightningDamage(IncreaseModifier):
+    def __init__(self, value):
+        super().__init__(Damage, Vector([0, value, 0, 0, 0]))
+
+
+class IncreaseFireDamage(IncreaseModifier):
+    def __init__(self, value):
+        super().__init__(Damage, Vector([0, 0, value, 0, 0]))
+
+
+class IncreaseColdDamage(IncreaseModifier):
+    def __init__(self, value):
+        super().__init__(Damage, Vector([0, 0, 0, value, 0]))
+
+
+class IncreaseChaosDamage(IncreaseModifier):
+    def __init__(self, value):
+        super().__init__(Damage, Vector([0, 0, 0, 0, value]))
 
 
 class LocalMultiIncreaseModifier(MultiIncreaseModifier):
@@ -232,31 +285,35 @@ class AddElementalResistances(AddModifier):
 class AddLightningResistance(AddResistance):
     def __init__(self, value):
         super().__init__('Lightning', value)
+        self.applicable_qualities += [LIGHTNING_QUALITY]
 
 
 class AddFireResistance(AddResistance):
     def __init__(self, value):
         super().__init__('Fire', value)
+        self.applicable_qualities += [FIRE_QUALITY]
 
 
 class AddColdResistance(AddResistance):
     def __init__(self, value):
         super().__init__('Cold', value)
+        self.applicable_qualities += [COLD_QUALITY]
 
 
 class AddChaosResistance(AddResistance):
     def __init__(self, value):
         super().__init__('Chaos', value)
+        self.applicable_qualities += [CHAOS_QUALITY]
 
 
 class AddMana(AddModifier):
     def __init__(self, value):
-        super().__init__(Mana, value)
+        super().__init__(Mana, value, qualities=[MANA_QUALITY])
 
 
 class AddLife(AddModifier):
     def __init__(self, value):
-        super().__init__(Life, value)
+        super().__init__(Life, value, qualities=[LIFE_QUALITY])
 
 
 class AddRarity(AddModifier):
@@ -271,17 +328,17 @@ class AddSpirit(AddModifier):
 
 class AddStrength(AddModifier):
     def __init__(self, value):
-        super().__init__(Strength, value)
+        super().__init__(Strength, value, qualities=[ATTRIBUTE_QUALITY])
 
 
 class AddDexterity(AddModifier):
     def __init__(self, value):
-        super().__init__(Dexterity, value)
+        super().__init__(Dexterity, value, qualities=[ATTRIBUTE_QUALITY])
 
 
 class AddIntelligence(AddModifier):
     def __init__(self, value):
-        super().__init__(Intelligence, value)
+        super().__init__(Intelligence, value, qualities=[ATTRIBUTE_QUALITY])
 
 
 class IncreaseAilmentMagnitude(MultiIncreaseModifier):
@@ -291,12 +348,13 @@ class IncreaseAilmentMagnitude(MultiIncreaseModifier):
 
 class AddAccuracy(AddModifier):
     def __init__(self, value):
-        super().__init__(Accuracy, value)
+        super().__init__(Accuracy, value, qualities=[ATTACK_QUALITY])
 
 
 class AddAllAttributes(MultiAddModifier):
     def __init__(self, value):
         super().__init__([Strength, Dexterity, Intelligence], value)
+        self.applicable_qualities = [ATTRIBUTE_QUALITY]
 
 
 class MovementSpeedIncrease(IncreaseModifier):
@@ -346,24 +404,24 @@ class FlaskRecoveryIncrease(MultiIncreaseModifier):
 
 class AddManaPerKill(AddModifier):
     def __init__(self, value):
-        super().__init__(ManaPerKill, value)
+        super().__init__(ManaPerKill, value, qualities=[MANA_QUALITY])
 
 
 class AddLifePerKill(AddModifier):
     def __init__(self, value):
-        super().__init__(LifePerKill, value)
+        super().__init__(LifePerKill, value, qualities=[LIFE_QUALITY])
 
 
 class AddEvasion(AddModifier):
     def __init__(self, value):
-        super().__init__(Evasion, value)
+        super().__init__(Evasion, value, qualities=[DEFENCE_QUALITY])
 
 
 class AddEnergyShield(AddModifier):
     def __init__(self, value):
-        super().__init__(EnergyShield, value)
+        super().__init__(EnergyShield, value, qualities=[DEFENCE_QUALITY])
 
 
 class IncreasedManaRegen(IncreaseModifier):
     def __init__(self, value):
-        super().__init__(ManaRegenerationRate, value)
+        super().__init__(ManaRegenerationRate, value, qualities=[MANA_QUALITY])

@@ -1,147 +1,202 @@
-from items import *
+from v5.items import *
 
 
-def keep_only_letters(txt):
+def letters(txt):
     return ''.join([c for c in txt if 'a' <= c <= 'z' or 'A' <= c <= 'Z'])
 
 
-class ModifierEncoding:
-    def __init__(self, letters, decoder):
-        self.letters = letters
-        self.decoder = decoder
-        self.identifier = None
-
-    def check_type(self, line):
-        if self.identifier is not None:
-            return self.identifier(line)
-        return keep_only_letters(line) == self.letters
-
-    def __call__(self, line):
-        return self.decoder(line)
+def numeric(c):
+    return '0' <= c <= '9'
 
 
-class LocalDamageEncoding(ModifierEncoding):
-    def __init__(self, dmg_type):
-        self.dmg_type = dmg_type
-
-        def decode(line):
-            p0 = int(line.split(' ')[1])
-            p1 = int(line.split(' ')[3])
-            if self.dmg_type == 'Physical':
-                return LocalAddModifier(Damage, Vector([Vector([p0, p1]), Vector([0, 0]), Vector([0, 0]), Vector([0, 0]), Vector([0, 0])]))
-            if self.dmg_type == 'Lightning':
-                return LocalAddModifier(Damage, Vector([Vector([0, 0]), Vector([p0, p1]), Vector([0, 0]), Vector([0, 0]), Vector([0, 0])]))
-            if self.dmg_type == 'Fire':
-                return LocalAddModifier(Damage, Vector([Vector([0, 0]), Vector([0, 0]), Vector([p0, p1]), Vector([0, 0]), Vector([0, 0])]))
-            if self.dmg_type == 'Cold':
-                return LocalAddModifier(Damage, Vector([Vector([0, 0]), Vector([0, 0]), Vector([0, 0]), Vector([p0, p1]), Vector([0, 0])]))
-            if self.dmg_type == 'Chaos':
-                return LocalAddModifier(Damage, Vector([Vector([0, 0]), Vector([0, 0]), Vector([0, 0]), Vector([0, 0]), Vector([p0, p1])]))
-
-        super().__init__(f'Addsto{dmg_type}Damage', decode)
+def digits(txt):
+    return ''.join([c for c in txt if numeric(c)])
 
 
-class LocalAddDefenseEncoding(ModifierEncoding):
-    def __init__(self, defense_type):
-        self.defense_type = defense_type
-
-        def decode(line):
-            p = int(line[1:].split(' ')[0])
-            return LocalAddModifier(self.defense_type, p)
-
-        super().__init__(f'tomaximum{self.defense_type.name}', decode)
+def normalise_whitespace(txt):
+    while '  ' in txt or '\t' in txt or '\n' in txt:
+        txt = txt.replace('  ', ' ').replace('\t', ' ').replace('\n', ' ')
+    return txt
 
 
-class LocalIncDefenseEncoding(ModifierEncoding):
-    def __init__(self, defense_type):
-        self.defense_type = defense_type
-
-        def decode(line):
-            p = int(line.split('% ')[0])
-            return LocalIncreaseModifier(self.defense_type, p)
-
-        super().__init__(f'increased{self.defense_type.name}', decode)
+def remove_whitespace(txt):
+    return ''.join([c for c in txt if not c in [' ', '\t', '\n']])
 
 
-class AddEncode(ModifierEncoding):
-    def __init__(self, stat):
-        def decode(line):
-            p = int(line[1:].split(' to')[0])
-            return AddModifier(stat, p)
+def first_int(txt):
+    for t in normalise_whitespace(txt).split(' '):
+        if digits(t) == t:
+            return int(t)
+    raise ValueError('No integer found in text')
 
-        super().__init__(f'', decode)
-        self.identifier = lambda x: x[0] == '+'
+
+def all_ints(txt):
+    return [int(t) for t in normalise_whitespace(txt).split(' ') if digits(t) == t]
+
+
+def first_two_ints(txt):
+    return all_ints(txt)[:2]
+
+
+def first_float(txt):
+    txt = normalise_whitespace(txt)
+    if txt == '':
+        raise ValueError('empty text, no floats found')
+    if not '.' in txt[1:-1]:
+        try:
+            return first_int(txt)
+        except ValueError:
+            raise ValueError('No dot or integer found in text')
+
+    dot_place = txt.index('.')
+    if dot_place == 0 or txt[dot_place - 1] == ' ':
+        return float('0.' + str(first_int(txt)))
+    int_part = first_int(txt)
+    dec = first_int(txt[dot_place + 1:])
+    return float(str(int_part) + '.' + str(dec))
+
+
+def first_percent_int(txt):
+    return all_ints(txt.split('%')[0])[-1]
+
+
+def first_percent_float(txt):
+    txt = normalise_whitespace(txt)
+    return first_float(txt.split('%')[0].split(' ')[-1])
+
+
+def begins_with(txt, s):
+    return txt[:len(s)] == s
+
+
+class ModifierParser:
+    def __init__(self, line, item_class):
+        self.line = line
+        self.letters = letters(line).lower()
+        self.item_class = item_class
+
+    def parse_local_weapon(self):
+        if self.letters == 'increasedphysicaldamage':
+            return LocalPhysicalDamageIncrease(first_percent_int(self.line) / 100)
+        if self.letters == 'increasedattackspeed':
+            return LocalIncreaseModifier(AttackSpeed, first_percent_int(self.line) / 100)
+        if self.letters == 'addstolightningdamage':
+            a, b = first_two_ints(self.line)
+            return LocalAddLightningDamage(a, b)
+        if self.letters == 'addstocolddamage':
+            a, b = first_two_ints(self.line)
+            return LocalAddColdDamage(a, b)
+        if self.letters == 'addstofiredamage':
+            a, b = first_two_ints(self.line)
+            return LocalAddFireDamage(a, b)
+        if self.letters == 'addstochaosdamage':
+            a, b = first_two_ints(self.line)
+            return LocalAddChaosDamage(a, b)
+        if self.letters == 'addstophysicaldamage':
+            a, b = first_two_ints(self.line)
+            return LocalAddPhysicalDamage(a, b)
+
+    def parse(self):
+        if issubclass(self.item_class, Weapon):
+            m = self.parse_local_weapon()
+            if m is not None:
+                return m
+
+        local_add_armour_types = {
+            'tomaximumenergyshield': EnergyShield,
+            'toarmour': Armour,
+            'toevasionrating': Evasion
+        }
+        if issubclass(self.item_class, ArmourItem):
+            if self.letters in local_add_armour_types:
+                return LocalAddModifier(local_add_armour_types[self.letters], first_int(self.line))
+
+        global_add_keywords_int = {
+            'toaccuracyrating': Accuracy,
+            'tostrength': Strength,
+            'todexterity': Dexterity,
+            'tointelligence': Intelligence,
+            'tomaximumlife': Life,
+            'tomaximummana': Mana,
+            'tomaximumenergyshield': EnergyShield,
+            'toarmour': Armour,
+            'toevasionrating': Evasion,
+            'gainlifeperenemykilled': LifePerKill
+        }
+
+        if self.letters in global_add_keywords_int:
+            return AddModifier(global_add_keywords_int[self.letters], first_int(self.line))
+
+        nonumeric = {
+            'bowattacksfireanadditionalarrow': AddModifier(ExtraProjectiles, 1),
+        }
+
+        if self.letters in nonumeric:
+            return nonumeric[self.letters]
+
+        damage_add = {
+            'addstophysicaldamagetoattacks': AddPhysicalDamage,
+            'addstofiredamagetoattacks': AddFireDamage,
+            'addstocolddamagetoattacks': AddColdDamage,
+            'addstolightningdamagetoattacks': AddChaosDamage,
+            'addstochaosdamagetoattacks': AddChaosDamage
+        }
+
+        if self.letters in damage_add:
+            a, b = first_two_ints(self.line)
+            return damage_add[self.letters](a, b)
+
+        damage_increase = {
+            'increasedphysicaldamage': PhysicalDamageIncrease,
+            'increasedfiredamage': IncreaseFireDamage,
+            'increasedlightningdamage': IncreaseLightningDamage,
+            'increasedchaosdamage': IncreaseChaosDamage,
+            'increasedcoldamage': IncreaseColdDamage
+        }
+
+        if self.letters in damage_increase:
+            return damage_increase[self.letters](first_percent_int(self.line) / 100)
 
 
 class ItemParser:
-    stat_parsed_names = {
-        'Critical Hit Chance': CritChance,
-        'Attack Speed': AttackSpeed,
-        'Critical Damage Bonus': CritBonus,
-        'Accuracy Rating': Accuracy,
-        'Reload Time': ReloadTime,
-        'Attacks per Second': AttackSpeed,
-    }
+    def __init__(self, filename):
+        with open(filename) as f:
+            self.string = f.read()
+        self.blocks = self.string.split('\n--------\n')
+        self.lines = [normalise_whitespace(l) for l in self.string.split('\n') if '--------' not in l and l != '']
 
-    damage_parsed_names = ['Physical Damage', 'Lightning Damage', 'Fire Damage', 'Cold Damage', 'Chaos Damage']
+    def item_class(self):
+        classes = {
+            'Amulets': Amulet,
+            'Rings': Ring,
+            'Crossbows': Crossbow,
+            'Bows': Bow,
+            'Quivers': OffHand,
+            'Gloves': Gloves,
+            'Boots': Boots,
+            'Helmets': Helmet,
+            'Body Armours': BodyArmour,
+        }
+        return classes[self.lines[0].split(': ')[1]]
 
-    item_classes = {
-        'Crossbows': Crossbow,
-    }
+    def rarity(self):
+        for line in self.lines:
+            if begins_with(line, 'Rarity: '):
+                return line.split(': ')[1]
+        return 'Rarity unknown'
 
-    def __init__(self, parsed_text):
-        self.raw = parsed_text
-        self.blocks = list(map(ItemParser.clean_parsed_fragment, parsed_text.split('--------\n')))
-        self.header_block = self.blocks[0]
+    def item_level(self):
+        for line in self.lines:
+            if begins_with(line, 'Item Level: '):
+                return first_int(line)
+        return 'Item level unknown'
 
-        self.base_stats_dict = {line.split(': ')[0]: line.split(': ')[1] for line in self.blocks[1].split('\n') if ': ' in line}
+    def implicit_mod(self):
+        for line in self.lines:
+            if ' (implicit)' in line:
+                return ModifierParser(line.replace(' (implicit)', ''), self.item_class()).parse()
 
-        if 'Quality' in self.base_stats_dict.keys():
-            self.quality = int(self.base_stats_dict['Quality'].replace('%', '').replace('+', '')) / 100
-            self.base_stats_dict.pop('Quality')
-
-        self.rune_lines = []
-        self.sockets = 0
-        self.implicit_line = ''
-
-        for block in self.blocks[2:]:
-            lines = block.split('\n')
-            for line in lines:
-                if '(rune)' in line:
-                    self.rune_lines.append(line.replace(' (rune)', '').strip())
-                if 'Sockets' in line:
-                    self.sockets = len([c for c in line.split(': ')[1] if c == ' S'])
-                if '(implicit)' in line:
-                    self.implicit_line = line.replace(' (implicit)', '').strip()
-                if 'Item Level:' in line:
-                    self.item_level = int(line.split(': ')[1])
-                if 'Corrupted' in line:
-                    self.corrupted = True
-
-        self.affix_lines = list(self.blocks[-1].split('\n')) if not self.corrupted else list(self.blocks[-2].split('\n'))
-
-    def decode_modifier(self, line):
-        if keep_only_letters(line) == 'AddstoPhysicalDamage':
-            p0 = int(line.split(' ')[1])
-            p1 = int(line.split(' ')[3])
-            return LocalAddModifier(Damage, Vector([Vector([p0, p1]), Vector([0, 0]), Vector([0, 0]), Vector([0, 0]), Vector([0, 0])]))
-        if keep_only_letters(line) == 'AddstoPhysicalDamage':
-            p0 = int(line.split(' ')[1])
-            p1 = int(line.split(' ')[3])
-            return LocalAddModifier(Damage, Vector([Vector([p0, p1]), Vector([0, 0]), Vector([0, 0]), Vector([0, 0]), Vector([0, 0])]))
-
-    def parse_affixes(self):
-        return [self.decode_modifier(line) for line in self.affix_lines]
-
-    def parse_implicits(self):
-        if self.implicit_line == '':
-            return []
-        return [self.decode_modifier(self.implicit_line)]
-
-    @staticmethod
-    def clean_parsed_fragment(line):
-        return line.replace('\t', ' ').replace('(augmented)', '').strip()
-
-    @staticmethod
-    def parse_percent(txt):
-        return Percent(float(txt.replace('%', '')) / 100)
+    def corrupted_mod(self):
+        for line in self.lines:
+            if ' (enchant)' in line:
+                return ModifierParser(line.replace(' (enchant)', ''), self.item_class()).parse()

@@ -1,7 +1,7 @@
 from copy import deepcopy
 
 import numpy as np
-from v5.custom_units import *
+from src.custom_units import *
 
 
 class StatValue:
@@ -104,6 +104,7 @@ class StatName:
         else:
             self.neutral_value = StatValue(neutral_base, maximum=maximum)
             self.prec = 2
+            # self.neutral_value = 0
         self.prec = prec if prec is not None else self.prec
 
     def __str__(self):

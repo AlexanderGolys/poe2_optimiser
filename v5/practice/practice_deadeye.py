@@ -1,6 +1,5 @@
-from v5.actives import ProjectileSkill
-from v5.comparators import *
-from v5.modifiers import feathered_fletching, LightningRodModifier
+from src.comparators import *
+from src.item_parser import *
 
 jewel1 = Jewel(affixes=[
     AllDamageIncreaseModifier(.05),
@@ -180,10 +179,10 @@ gem6 = SkillGem(MoreModifier(Damage, Vector([Vector([0, .3]), Vector([0, 0]), Ve
 
 base_skill = ActiveSkill('Shot', DamageConversion(), 3.61, 1, 0, 20, 0, [])
 
-lightning_arrow = ActiveSkill('Lightning Arrow', DamageConversion('Physical', 'Lightning', .4), 2.52, .9, 0, 19, 0, gems=[gem1, gem2, gem3, gem3, gem4],
+lightning_arrow = ActiveSkill('Lightning Arrow', DamageConversion('Physical', 'Lightning', .4), 2.52, .9, 0, 19, 0, gems=[gem1, gem2, gem3, gem4],
                               dmg_mult_per_new_level=[.13, .13, .14, .15, .15])
 
-belt = Belt(implicits=[IncreaseModifier(CharmDuration, .15)],
+belt = Belt(implicit=IncreaseModifier(CharmDuration, .15),
             affixes=[AddModifier(Armour, 41),
                      IncreaseModifier(ManaFlaskRecoveryRate, .36),
                      AddFireResistance(.38),
@@ -198,30 +197,23 @@ body_armour = BodyArmour(evasion=1140, quality=0, item_level=20, runes=[StormRun
                                   AddChaosResistance(.18),
                                   AddModifier(ThornsDamage, DamageTypeVector(Physical=Vector([8, 13])))])
 
-ring1 = Ring(implicits=[AddPhysicalDamage(1, 4)],
-             affixes=[AddLightningDamage(2, 84),
-                      DamageIncreaseModifier(cold=.04),
-                      AddAccuracy(25),
-                      AddFireResistance(.2),
-                      AddColdResistance(.36),
-                      AddLightningResistance(.37)])
-
 wild_storm = PassiveSkill([MoreModifier(Damage, Vector([Vector([0, 0]), Vector([0, .15]), Vector([0, .0]), Vector([0, .0]), Vector([0, 0])]))])
 
-amulet = Amulet(implicits=[AddModifier(LifeRegenerationRate, 2)],
+amulet = Amulet(implicit=AddModifier(LifeRegenerationRate, 2),
                 affixes=[IncreaseModifier(Evasion, .37),
                          AddLife(24),
                          AddRarity(.49),
                          AddModifier(ExtraProjectileSkillLevel, 3),
                          AddAllAttributes(22),
-                         AddFireResistance(.34)], allocated_passive=wild_storm)
+                         AddFireResistance(.34)],
+                allocated_passive=AllocatedPassiveSkill(wild_storm, 'Wild Storm'))
 
 bow = Bow(DamageTypeVector(DMG0_LST, Physical=Vector([96, 180]), Lightning=Vector([10, 228])), round(1.2 * 1.12, 6), 0.05,
           quality=.0, item_level=81, runes=[], sockets=2,
-          implicits=[AddModifier(ExtraProjectiles, 1)],
+          implicit=AddModifier(ExtraProjectiles, 1),
           affixes=[AddAccuracy(117), AddModifier(LifePerKill, 76)])
 
-quiver = OffHand(implicits=[AttackSpeedIncrease(.07)],
+quiver = OffHand(implicit=AttackSpeedIncrease(.07),
                  affixes=[AddFireDamage(13, 25),
                           AddLightningDamage(3, 71),
                           ProjectileSpeedIncrease(.4),
@@ -237,7 +229,7 @@ hand_of_wisdom = Gloves(energy_shield=23, evasion=60, quality=0, item_level=82, 
                         affixes=[widom_int, wisdom_dex,
                                  AddDexterity(20), AddIntelligence(19)])
 
-ring2 = Ring(implicits=[AddMana(29)],
+ring2 = Ring(implicit=AddMana(29),
              affixes=[AddLightningDamage(1, 66),
                       AddPhysicalDamage(2, 5),
                       DamageIncreaseModifier(cold=.19),
@@ -269,8 +261,13 @@ helmet = Helmet(evasion=146, energy_shield=55, quality=0, item_level=82, runes=[
                          AddIntelligence(32),
                          AddLightningResistance(.34)])
 
+# with open('items_data/ring1.txt') as f:
+#     parsed = f.read()
+#     parser = ItemParser(parsed)
+#     ring1 = parser.parse_item()
+
 inventory = Inventory(boots=boots, belt=belt, gloves=hand_of_wisdom, body=body_armour, helmet=helmet,
-                      ring1=ring2, ring2=ring3, weapon1=bow,
+                      ring1=ring3, ring2=ring3, weapon1=bow,
                       amulet=amulet,
                       flask_life=life_flask, flask_mana=mana_flask, charm1=charm, offhand=quiver)
 
@@ -278,11 +275,8 @@ base_stats = {Resistances: ResistanceVector([-.6, -.6, -.6, 0])}
 quest_mods_chosen = [IncreaseModifier(ManaRecoveryFromFlask, .15), IncreasedManaRegen(.25), IncreaseModifier(LifeRecoveryFromFlask, .15), AddChaosResistance(.1)]
 player = Player(Ranger, 90, inventory=inventory, passive_skills=passives, quest_mods_chosen=quest_mods_chosen, base_stats=base_stats,
                 active_skills=[base_skill, lightning_arrow])
-player2 = Player(Ranger, 90, inventory=inventory, passive_skills=passives2, quest_mods_chosen=quest_mods_chosen, base_stats=base_stats,
-                 active_skills=[base_skill, lightning_arrow])
 
-                 
 if __name__ == '__main__':
     print(player)
     print('---')
-    print(Comparator(player, player2).compare_players())
+    print(Comparator(player, player).compare_players())

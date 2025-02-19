@@ -1,15 +1,29 @@
 from v5.runes import *
+from v5.modifiers import *
+
+NORMAL_ITEM = 'Normal'
+MAGIC_ITEM = 'Magic'
+RARE_ITEM = 'Rare'
+UNIQUE_ITEM = 'Unique'
 
 
 class Item:
-    def __init__(self, base_stats, implicits=[], affixes=[], quality=0, quality_class=None, max_quality=.2, sockets=0, runes=[], item_level=80, corrupted=False):
+    def __init__(self, base_stats={}, implicit=None, affixes=[], quality=0, quality_class=DEFAULT_QUALITY, max_quality=20, sockets=0, runes=[], item_level=82, corrupted=False, corrupted_mod=None,
+                 rarity=RARE_ITEM):
         self.base_stats = {name: StatValue(value) for name, value in base_stats.items()}
-        self.implicits = implicits
+        self.implicit_mod = implicit
+        self.corrupted_mod = corrupted_mod
+        self.rarity = rarity
         self.affixes = affixes
         self.runes = runes
         self.quality_ = quality
         self.quality_class_ = quality_class
         self.max_quality = max_quality
+        self.item_type_name = 'Unknown item type'
+        self.no_sockets = max(sockets, len(runes))
+        self.item_level = item_level
+        self.corrupted = corrupted
+        self.corrupted_mod = corrupted_mod
 
     def rune_mods(self):
         if isinstance(self, Weapon):
@@ -22,19 +36,16 @@ class Item:
 
     @quality.setter
     def quality(self, value):
-        self.quality_ = round(value, 2)
+        self.quality_ = int(value)
 
     @property
     def quality_class(self):
         return self.quality_class_
 
-    def quality_mods(self):
-        if self.quality_class is None:
-            return []
-        return [self.quality_class(self.quality)] if self.quality > 0 else []
-
     def mods(self):
-        return self.implicits + self.affixes + self.rune_mods() + self.quality_mods()
+        implicits = [self.implicit_mod] if self.implicit_mod is not None else []
+        corrupted = [self.corrupted_mod] if self.corrupted_mod is not None else []
+        return corrupted + implicits + self.affixes + self.rune_mods()
 
     def local_mods(self):
         return list(filter(lambda x: isinstance(x, Modifier) and x.local, self.mods()))
@@ -55,172 +66,189 @@ class Item:
             base = mod(stat_name, base)
         return base
 
+    def quality_str(self, show_zero=False):
+        if self.quality == 0 and not show_zero:
+            return ''
+        if self.quality_class is None:
+            return f'Quality: {self.quality}%\n'
+        return f'{self.quality_class}: {self.quality}%\n'
+
+    def header_str(self):
+        s = f'{self.item_type_name} (item level {self.item_level}, {self.rarity})\n'
+        if self.corrupted:
+            s += 'Corrupted\n'
+        return s + self.quality_str()
+
     def __str__(self):
-        return f'{self.base_stats}' + '\n' + '\n'.join([str(mod) for mod in self.local_mods()]) + '\n' + '\n'.join([str(mod) for mod in self.global_mods()])
+        s = self.header_str()
+        s += f'{self.base_stats}\n'
+        if self.corrupted_mod is not None:
+            s += f'[corruption]\t{self.corrupted_mod}\t\n------------------\n'
+        if self.implicit_mod is not None:
+            s += f'[implicit]\t{self.implicit_mod}\n------------------\n'
+        for mod in self.rune_mods():
+            s += f'[rune]\t{mod}\n'
+        if self.runes:
+            s += '------------------\n'
+        for mod in self.affixes:
+            s += f'{mod}\n'
+        if self.affixes:
+            s += '------------------\n\n'
+        return s
+
+    def rebase_base_float_stat(self, stat_name, value, quality_applied=False):
+        if quality_applied:
+            value /= 1 + self.quality / 100
+        inc = 1
+        for mod in self.local_mods():
+            if isinstance(mod, LocalIncreaseModifier) and mod.stat_name == stat_name:
+                inc += mod.value
+        value /= inc
+        for mod in self.local_mods():
+            if isinstance(mod, LocalAddModifier) and mod.stat_name == stat_name:
+                value -= mod.value
+        return value
 
 
 class Weapon(Item):
-    def __init__(self, base_stats, implicits=[], affixes=[], quality=0, sockets=2, runes=[], item_level=80, corrupted=False, local_mods_applied=False):
-        if local_mods_applied:
-            physical_damage = base_stats[Damage].flat['physical']
-            physical_damage /= 1 + quality
-            local_inc = 1
-            local_add = Vector([0, 0])
-            for mod in affixes:
-                if isinstance(mod, LocalIncreaseModifier) and mod.stat_name == Damage:
-                    if isinstance(mod.value, (int, float)):
-                        local_inc += mod.value
-                    else:
-                        local_inc += mod.value[0]
-                if isinstance(mod, LocalAddModifier) and mod.stat_name == Damage:
-                    local_add += mod.value['physical']
-            physical_damage /= local_inc
-            physical_damage -= local_add
-            base_stats[Damage].flat['physical'] = physical_damage
+    def __init__(self, **kwargs):
+        super().__init__(**kwargs, max_quality=20, quality_class=DEFAULT_QUALITY)
+        self.item_type_name = 'Weapon'
 
-        super().__init__(base_stats, implicits, affixes, quality, quality_class=WeaponQualityModifier, max_quality=.2, sockets=sockets, runes=runes, item_level=item_level, corrupted=corrupted)
+    def rebase_damage(self, dmg_):
+        dmg = deepcopy(dmg_)
+        physical_inc = 1
+
+        for rune_mod in self.rune_mods():
+            if isinstance(rune_mod, AddModifier) and rune_mod.stat_name == Damage:
+                dmg -= rune_mod.value
+            if isinstance(rune_mod, LocalPhysicalDamageIncrease):
+                physical_inc += rune_mod.value
+
+        dmg *= Vector([1 / (1 + self.quality / 100), 1, 1, 1, 1])
+
+        for mod in self.local_mods():
+            if isinstance(mod, LocalPhysicalDamageIncrease):
+                physical_inc += mod.value
+
+        dmg['Physical'] /= physical_inc
+
+        for mod in self.local_mods():
+            if isinstance(mod, LocalAddModifier) and mod.stat_name == Damage:
+                dmg['Physical'] -= mod.value
+        return dmg
 
 
 class Bow(Weapon):
-    def __init__(self, dmg, attack_speed, crit_chance, implicits=[], affixes=[], quality=0, sockets=2, runes=[], item_level=80, corrupted=False, local_mods_applied=False):
-        super().__init__({Damage: dmg, AttackSpeed: attack_speed, CritChance: crit_chance},
-                         implicits, affixes, quality, sockets, runes, item_level, corrupted, local_mods_applied)
+    def __init__(self, dmg, attack_speed, crit_chance, local_applied=True, **kwargs):
+        super().__init__(base_stats={Damage: dmg, AttackSpeed: attack_speed, CritChance: crit_chance}, **kwargs)
+        if local_applied:
+            self.base_stats[Damage] = DamageStatValue(self.rebase_damage(self.base_stats[Damage].value()))
+            self.base_stats[AttackSpeed] = StatValue(self.rebase_base_float_stat(AttackSpeed, self.base_stats[AttackSpeed].value()))
+            self.base_stats[CritChance] = StatValue(self.rebase_base_float_stat(CritChance, self.base_stats[CritChance].value()))
+        self.item_type_name = 'Bow'
 
 
 class Crossbow(Weapon):
-    def __init__(self, dmg, attack_speed, crit_chance, reload_time, implicits=[], affixes=[], quality=0, sockets=2, runes=[], item_level=80, corrupted=False, local_mods_applied=False):
-        super().__init__({Damage: dmg, AttackSpeed: attack_speed, CritChance: crit_chance, ReloadTime: reload_time},
-                         implicits, affixes, quality, sockets, runes, item_level, corrupted, local_mods_applied)
+    def __init__(self, dmg, attack_speed, crit_chance, reload_time, local_applied=True, **kwargs):
+        super().__init__(base_stats={Damage: dmg, AttackSpeed: attack_speed, CritChance: crit_chance, ReloadTime: reload_time}, **kwargs)
+        if local_applied:
+            self.base_stats[Damage] = DamageStatValue(self.rebase_damage(self.base_stats[Damage].value()))
+            self.base_stats[AttackSpeed] = StatValue(self.rebase_base_float_stat(AttackSpeed, self.base_stats[AttackSpeed].value()))
+            self.base_stats[CritChance] = StatValue(self.rebase_base_float_stat(CritChance, self.base_stats[CritChance].value()))
+            self.base_stats[ReloadTime] = StatValue(self.rebase_base_float_stat(ReloadTime, self.base_stats[ReloadTime].value()))
+        self.item_type_name = 'Crossbow'
+
 
 class OffHand(Item):
-    def __init__(self, implicits=[], affixes=[], item_level=80, corrupted=False):
-        super().__init__({}, implicits, affixes, quality=0, quality_class=None, max_quality=0, sockets=0, runes=[], item_level=item_level, corrupted=corrupted)
+    def __init__(self, **kwargs):
+        super().__init__(base_stats={}, quality=0, quality_class=None, max_quality=0, sockets=0, runes=[], **kwargs)
+        self.item_type_name = 'Off-hand'
+
 
 class ArmourItem(Item):
-    def __init__(self, armour=0, evasion=0, energy_shield=0, implicits=[], affixes=[], quality=0, sockets=1, runes=[], item_level=80, corrupted=False, local_mods_applied=False):
-        if local_mods_applied:
-            armour /= 1 + quality
-            evasion /= 1 + quality
-            energy_shield /= 1 + quality
-            armour_inc = 1
-            evasion_inc = 1
-            energy_shield_inc = 1
-            armour_add = 0
-            evasion_add = 0
-            energy_shield_add = 0
-            for mod in affixes:
-                if isinstance(mod, LocalIncreaseModifier):
-                    if mod.stat_name == Armour:
-                        armour_inc += mod.value
-                    if mod.stat_name == Evasion:
-                        evasion_inc += mod.value
-                    if mod.stat_name == EnergyShield:
-                        energy_shield_inc += mod.value
-                if isinstance(mod, LocalAddModifier):
-                    if mod.stat_name == Armour:
-                        armour_add += mod.value
-                    if mod.stat_name == Evasion:
-                        evasion_add += mod.value
-                    if mod.stat_name == EnergyShield:
-                        energy_shield_add += mod.value
-            armour /= armour_inc
-            evasion /= evasion_inc
-            energy_shield /= energy_shield_inc
-            armour = round(armour - armour_add)
-            evasion = round(evasion - evasion_add)
-            energy_shield = round(energy_shield - energy_shield_add)
-
-        super().__init__({Armour: armour, Evasion: evasion, EnergyShield: energy_shield},
-                         implicits, affixes, quality, quality_class=ArmourQualityModifier, max_quality=.2, sockets=sockets, runes=runes, item_level=item_level, corrupted=corrupted)
+    def __init__(self, armour=0, evasion=0, energy_shield=0, local_applied=True, **kwargs):
+        super().__init__(base_stats={Armour: armour, Evasion: evasion, EnergyShield: energy_shield}, max_quality=20, quality_class=DEFAULT_QUALITY, **kwargs)
+        if local_applied:
+            self.base_stats[Armour] = IntStatValue(self.rebase_base_float_stat(Armour, armour, True))
+            self.base_stats[Evasion] = IntStatValue(self.rebase_base_float_stat(Evasion, evasion, True))
+            self.base_stats[EnergyShield] = IntStatValue(self.rebase_base_float_stat(EnergyShield, energy_shield, True))
+        self.item_type_name = 'Armour Type Item'
 
 
 class Boots(ArmourItem):
-    pass
+    def __init__(self, **kwargs):
+        super().__init__(**kwargs)
+        self.item_type_name = 'Boots'
 
 
 class Gloves(ArmourItem):
-    pass
+    def __init__(self, **kwargs):
+        super().__init__(**kwargs)
+        self.item_type_name = 'Gloves'
 
 
 class Helmet(ArmourItem):
-    pass
+    def __init__(self, **kwargs):
+        super().__init__(**kwargs)
+        self.item_type_name = 'Helmet'
 
 
 class BodyArmour(ArmourItem):
-    pass
+    def __init__(self, **kwargs):
+        super().__init__(**kwargs)
+        self.item_type_name = 'Body Armour'
 
 
 class Jewellery(Item):
-    def __init__(self, implicits=[], affixes=[], quality=0, quality_tag=None, item_level=80, corrupted=False):
-        super().__init__({}, implicits, affixes, quality, quality_class=quality_tag, sockets=0, runes=[], item_level=item_level, corrupted=corrupted)
-
-
-class ManaFlask(Item):
-    def __init__(self, mana_recovery, time, charges, cost, affixes=[], implicits=[], quality=0, item_level=80, corrupted=False, local_mods_applied=False):
-        if local_mods_applied:
-            mana_recovery /= 1 + quality
-            for mod in affixes:
-                if isinstance(mod, LocalIncreaseModifier) and mod.stat_name == ManaRecoveryFromFlask:
-                    mana_recovery /= 1 + mod.value
-        super().__init__({ManaRecoveryFromFlask: mana_recovery, ManaFlaskRecoveryRate: 1 / time, ManaFlaskCharges: charges, ManaFlaskChargesCost: cost, ManaFlaskChargesPerSecond: 0},
-                         affixes=affixes, implicits=implicits, quality=quality, quality_class=None, sockets=0, runes=[], item_level=item_level, corrupted=corrupted)
-
-
-class LifeFlask(Item):
-    def __init__(self, life_recovery, time, charges, cost, affixes=[], implicits=[], quality=0, item_level=80, corrupted=False, local_mods_applied=False):
-        if local_mods_applied:
-            life_recovery /= 1 + quality
-            for mod in affixes:
-                if isinstance(mod, LocalIncreaseModifier) and mod.stat_name == LifeRecoveryFromFlask:
-                    life_recovery /= 1 + mod.value
-        super().__init__({LifeRecoveryFromFlask: life_recovery, LifeFlaskRecoveryRate: 1 / time, LifeFlaskCharges: charges, LifeFlaskChargesCost: cost, LifeFlaskChargesRecoveryPerSecond: 0},
-                         affixes=affixes, implicits=implicits, quality=quality, quality_class=None, sockets=0, runes=[], item_level=item_level, corrupted=corrupted)
-
-
-class Charm(Item):
-    def __init__(self, duration, charges, cost, effect, affixes=[], implicits=[], quality=0, item_level=80, corrupted=False, local_mods_applied=False):
-        if local_mods_applied:
-            for mod in affixes:
-                if isinstance(mod, LocalIncreaseModifier) and mod.stat_name == CharmDuration:
-                    duration /= 1 + mod.value
-        super().__init__({CharmDuration: duration, CharmCharges: charges, CharmCost: cost},
-                         affixes=affixes, implicits=implicits, quality=quality, quality_class=None, sockets=0, runes=[], item_level=item_level, corrupted=corrupted)
-        self.effect = effect
+    def __init__(self, **kwargs):
+        super().__init__(base_stats={}, sockets=0, runes=[], **kwargs)
+        self.item_type_name = 'Jewellery Type Item'
 
 
 class AmuletOrRing(Jewellery):
-
-    @property
-    def quality_class(self):
-        return self.quality_class_
-
-    @quality_class.setter
-    def quality_class(self, tag):
-        self.quality_class_ = tag
+    def __init__(self, local_applied=True, **kwargs):
+        super().__init__(**kwargs)
         for mod in self.affixes:
-            mod.set_magnitude_from_quality(self.quality, tag)
+            if isinstance(mod, NumericalModifier) and self.quality_class_ in mod.applicable_qualities:
+                if local_applied:
+                    mod.magnitude = self.quality / 100 + 1
+                else:
+                    mod.magnify_to(self.quality / 100 + 1)
+        self.item_type_name = 'Amulet or Ring'
 
-    @property
-    def quality(self):
-        return self.quality_
 
-    @quality.setter
-    def quality(self, value):
-        self.quality_ = round(value, 2)
-        for mod in self.affixes:
-            mod.set_magnitude_from_quality(self.quality_, self.quality_class_)
+class ManaFlask(Item):
+    def __init__(self, mana_recovery, time, charges, cost, local_applied=True, **kwargs):
+        super().__init__({ManaRecoveryFromFlask: mana_recovery, ManaFlaskRecoveryRate: 1 / time, ManaFlaskCharges: charges, ManaFlaskChargesCost: cost, ManaFlaskChargesPerSecond: 0},
+                         sockets=0, runes=[], quality_class=DEFAULT_QUALITY, max_quality=20, **kwargs)
+        if local_applied:
+            self.base_stats[ManaRecoveryFromFlask] = self.rebase_base_float_stat(ManaRecoveryFromFlask, mana_recovery, True)
+        self.item_type_name = 'Mana Flask'
 
-    def quality_mods(self):
-        return []
 
-    def reverse_local_mods(self):
-        for mod in self.affixes:
-            mod.rebase_applied_magnitude()
+class LifeFlask(Item):
+    def __init__(self, life_recovery, time, charges, cost, local_applied=True, **kwargs):
+        super().__init__({LifeRecoveryFromFlask: life_recovery, LifeFlaskRecoveryRate: 1 / time, LifeFlaskCharges: charges, LifeFlaskChargesCost: cost},
+                         sockets=0, runes=[], quality_class=DEFAULT_QUALITY, max_quality=20, **kwargs)
+        if local_applied:
+            self.base_stats[LifeRecoveryFromFlask] = self.rebase_base_float_stat(LifeRecoveryFromFlask, life_recovery, True)
+        self.item_type_name = 'Life Flask'
+
+
+class Charm(Item):
+    def __init__(self, duration, charges, cost, effect, **kwargs):
+        super().__init__({CharmDuration: duration, CharmCharges: charges, CharmCost: cost, CharmSlots: 1},
+                         sockets=0, runes=[], quality_class=DEFAULT_QUALITY, max_quality=20, **kwargs)
+        self.effect = effect
+        self.item_type_name = 'Charm'
 
 
 class AllocatedPassiveSkill(Modifier):
-    def __init__(self, passive_skill):
+    def __init__(self, passive_skill, skill_name='Unknown'):
         self.passive_skill = passive_skill
+        self.skill_name = skill_name
+        self.local = False
 
         def act(name, value):
             for mod in self.passive_skill.modifiers:
@@ -230,38 +258,45 @@ class AllocatedPassiveSkill(Modifier):
         super().__init__(act, False)
 
     def __str__(self):
-        return f'Allocated Passive Skill: {self.passive_skill}'
+        return f'Allocated Passive Skill: {self.skill_name}'
 
 
 class Amulet(AmuletOrRing):
-    def __init__(self, implicits, affixes=[], quality=0, quality_tag=None, item_level=80, corrupted=False, allocated_passive=None):
-        super().__init__(implicits, affixes, quality, quality_tag, item_level, corrupted)
-        if allocated_passive is not None:
-            self.implicits.append(AllocatedPassiveSkill(allocated_passive))
+    def __init__(self, allocated_passive=None, **kwargs):
+        super().__init__(**kwargs)
+        self.allocated_passive = allocated_passive
+        self.item_type_name = 'Amulet'
 
-    @property
-    def allocated_passive(self):
-        for mod in self.implicits:
-            if isinstance(mod, AllocatedPassiveSkill):
-                return mod.passive_skill
-        return None
+    def mods(self):
+        allocated = [self.allocated_passive] if self.allocated_passive is not None else []
+        return super().mods() + allocated
 
-    @allocated_passive.setter
-    def allocated_passive(self, passive_skill):
-        for mod in self.implicits:
-            if isinstance(mod, AllocatedPassiveSkill):
-                mod.passive_skill = passive_skill
-                return
-        self.implicits.append(AllocatedPassiveSkill(passive_skill))
+    def __str__(self):
+        s = self.header_str()
+        s += f'{self.base_stats}\n'
+        if self.corrupted_mod is not None:
+            s += f'[corruption]\t{self.corrupted_mod}\t\n------------------\n'
+        if self.implicit_mod is not None:
+            s += f'[implicit]\t{self.implicit_mod}\n------------------\n'
+        if self.allocated_passive is not None:
+            s += f'[allocated passive: {self.allocated_passive.skill_name}]\n{self.allocated_passive.passive_skill}\n------------------\n'
+        for mod in self.affixes:
+            s += f'{mod}\n'
+        if self.affixes:
+            s += '------------------\n\n'
+        return s
 
 
 class Ring(AmuletOrRing):
-    pass
+    def __init__(self, **kwargs):
+        super().__init__(**kwargs)
+        self.item_type_name = 'Ring'
 
 
 class Belt(Jewellery):
-    def __init__(self, implicits, affixes=[], item_level=80, corrupted=False):
-        super().__init__(implicits, affixes, item_level=item_level, corrupted=corrupted)
+    def __init__(self, **kwargs):
+        super().__init__(quality=0, quality_class=None, **kwargs)
+        self.item_type_name = 'Belt'
 
 
 class Inventory:
@@ -401,89 +436,3 @@ class Inventory:
                 self.offhand1 = item
             else:
                 self.offhand2 = item
-
-
-# Item Class: Crossbows
-# Rarity: Rare
-# Glyph Core
-# Bombard Crossbow
-# --------
-# Physical Damage: 12-47
-# Lightning Damage: 2-49 (augmented)
-# Critical Hit Chance: 6.45% (augmented)
-# Attacks per Second: 1.65
-# Reload Time: 0.75
-# --------
-# Requirements:
-# Level: 33
-# Str: 43
-# Dex: 43
-# --------
-# Item Level: 35
-# --------
-# Grenade Skills Fire an additional Projectile (implicit)
-# --------
-# Adds 2 to 49 Lightning Damage
-# +121 to Accuracy Rating
-# +1.45% to Critical Hit Chance
-# +17% to Critical Damage Bonus
-#
-#
-#
-# Item Class: Crossbows
-# Rarity: Rare
-# Beast Core
-# Alloy Crossbow
-# --------
-# Quality: +20% (augmented)
-# Physical Damage: 25-76 (augmented)
-# Elemental Damage: 14-22 (augmented), 3-43 (augmented)
-# Critical Hit Chance: 7.43% (augmented)
-# Attacks per Second: 1.89 (augmented)
-# Reload Time: 0.70 (augmented)
-# --------
-# Requirements:
-# Level: 26
-# Str: 34
-# Dex: 34
-# --------
-# Sockets: S S
-# --------
-# Item Level: 32
-# --------
-# Adds 14 to 22 Fire Damage (rune)
-# --------
-# Adds 10 to 21 Physical Damage
-# Adds 3 to 43 Lightning Damage
-# +52 to Accuracy Rating
-# +2.43% to Critical Hit Chance
-# +11% to Critical Damage Bonus
-# 11% increased Attack Speed
-
-
-# Item Class: Body Armours
-# Rarity: Rare
-# Loath Ward
-# Hexer's Robe
-# --------
-# Quality: +20% (augmented)
-# Energy Shield: 150 (augmented)
-# --------
-# Requirements:
-# Level: 23
-# Int: 24
-# --------
-# Sockets: S S S
-# --------
-# Item Level: 29
-# --------
-# 60% increased Armour, Evasion and Energy Shield (rune)
-# --------
-# +26 to maximum Energy Shield
-# 19% increased Energy Shield
-# +7 to maximum Life
-# +18% to Cold Resistance
-# 3.7 Life Regeneration per second
-# +75 to Stun Threshold
-# --------
-# Corrupted

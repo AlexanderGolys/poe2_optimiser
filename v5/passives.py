@@ -1,4 +1,4 @@
-from v5.items import *
+from src.items import *
 
 
 class PassiveSkill:
@@ -68,8 +68,8 @@ class IncreaseAttackSpeedPassive(SinglePassiveSkill):
 
 
 class Jewel(Jewellery):
-    def __init__(self, implicits=[], affixes=[], item_level=80, corrupted=False):
-        super().__init__(implicits, affixes, item_level=item_level, corrupted=corrupted)
+    def __init__(self, **kwargs):
+        super().__init__(**kwargs)
 
     def passive_skill(self):
         return PassiveSkill(self.mods())
